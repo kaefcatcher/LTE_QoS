@@ -1,0 +1,4 @@
+% time	cellId	IMSI	RNTI	layer	mcs	size	rv	ndi	correct	ccId
+115	1	1	1	0	2	137	0	1	1	0
+144	1	1	1	0	2	137	0	1	1	0
+1370	1	1	1	0	14	807	0	1	1	0

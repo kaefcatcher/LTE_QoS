@@ -1,0 +1,5 @@
+% time	cellId	IMSI	frame	sframe	RNTI	mcs	size	ccId
+4.001	1	1	401	2	1	0	85	0
+4.001	1	1	401	2	1	0	85	1
+4.002	1	1	401	3	1	0	85	0
+4.002	1	1	401	3	1	0	85	1
