@@ -640,6 +640,23 @@ class LteHelper : public Object
     Ptr<RadioBearerStatsCalculator> GetPdcpStats();
 
     /**
+     *
+     * \return the PDCP stats calculator object
+     */
+    Ptr<MacStatsCalculator> GetMacStats();
+
+    /**
+     *
+     * \return the PDCP stats calculator object
+     */
+    Ptr<PhyTxStatsCalculator> GetPhyTxStats();
+    
+    /**
+     *
+     * \return the PDCP stats calculator object
+     */
+    Ptr<PhyRxStatsCalculator> GetPhyRxStats();
+    /**
      * Assign a fixed random variable stream number to the random variables used.
      *
      * The InstallEnbDevice() or InstallUeDevice method should have previously

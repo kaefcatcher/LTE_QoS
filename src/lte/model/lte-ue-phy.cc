@@ -1496,6 +1496,13 @@ LteUePhy::DoSetRnti(uint16_t rnti)
 }
 
 void
+LteUePhy::SetTransmissionMode(uint8_t txMode)
+{
+    NS_LOG_FUNCTION(this << (uint16_t)txMode);
+    this->DoSetTransmissionMode(txMode);
+}
+
+void
 LteUePhy::DoSetTransmissionMode(uint8_t txMode)
 {
     NS_LOG_FUNCTION(this << (uint16_t)txMode);

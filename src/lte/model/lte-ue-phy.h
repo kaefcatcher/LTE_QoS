@@ -121,6 +121,13 @@ class LteUePhy : public LtePhy
     double GetTxPower() const;
 
     /**
+     * \brief Set transmission mode public function
+     *
+     * \param txMode the transmission mode
+     */
+    void SetTransmissionMode(uint8_t txMode);
+
+    /**
      * \brief Get Uplink power control
      *
      * \return ptr to UE Uplink Power Control entity

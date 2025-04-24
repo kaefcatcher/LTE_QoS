@@ -1707,4 +1707,16 @@ LteHelper::GetPdcpStats()
     return m_pdcpStats;
 }
 
+Ptr<MacStatsCalculator> LteHelper::GetMacStats(){
+    return m_macStats;
+}
+
+Ptr<PhyTxStatsCalculator> LteHelper::GetPhyTxStats(){
+    return m_phyTxStats;
+}
+
+Ptr<PhyRxStatsCalculator> LteHelper::GetPhyRxStats(){
+    return m_phyRxStats;
+}
+
 } // namespace ns3
