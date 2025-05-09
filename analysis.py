@@ -13,24 +13,58 @@ class SimulationAnalyzer:
     def __init__(self, results_dir="SimulationResults"):
         self.results_dir = results_dir
         self.metrics = {
+            # Throughput metrics
             "total_throughput": [],
             "avg_user_throughput": [],
             "gbr_throughput": [],
             "non_gbr_throughput": [],
+            "voice_throughput": [],
+            "video_throughput": [],
+            "gaming_throughput": [],
+            "best_effort_throughput": [],
+            
+            # Quality metrics
             "avg_delay": [],
             "jitter": [],
             "packet_loss": [],
+            
+            # Efficiency metrics
             "spectral_efficiency": [],
             "fairness_index": [],
-            "scheduling_efficiency": [],
+            
+            # QoS compliance metrics
             "qos_compliance": [],
+            "voice_throughput_compliance": [],
+            "voice_delay_compliance": [],
+            "voice_loss_compliance": [],
+            "video_throughput_compliance": [],
+            "video_delay_compliance": [],
+            "video_loss_compliance": [],
+            "gaming_throughput_compliance": [],
+            "gaming_delay_compliance": [],
+            "gaming_loss_compliance": [],
+            "best_effort_throughput_compliance": [],
+            "best_effort_delay_compliance": [],
+            "best_effort_loss_compliance": [],
+            
+            # Actual QoS values
+            "voice_avg_throughput": [],
+            "voice_avg_delay": [],
+            "voice_avg_loss": [],
+            "video_avg_throughput": [],
+            "video_avg_delay": [],
+            "video_avg_loss": [],
+            "gaming_avg_throughput": [],
+            "gaming_avg_delay": [],
+            "gaming_avg_loss": [],
+            "best_effort_avg_throughput": [],
+            "best_effort_avg_delay": [],
+            "best_effort_avg_loss": [],
         }
         self.simulation_params = []
-        self.user_qos_stats = defaultdict(list)
-        self.user_actual_qos_values = defaultdict(list)  # New dictionary to store actual QoS values
 
     def parse_folder_name(self, folder_name):
-        """Извлекает параметры симуляции из названия папки"""
+        """Extract simulation parameters from folder name"""
         params = {}
         scenario_part, *params_parts = folder_name.split("_", 1)
         params["scenario"] = scenario_part
@@ -46,8 +80,6 @@ class SimulationAnalyzer:
             "Sched": "scheduler",
             "Mob": "mobility",
             "Dist": "distance",
-            "GBR": "gbr_traffic",
-            "NonGBR": "non_gbr_traffic",
         }
 
         parts = params_parts[0].split("_")
@@ -56,7 +88,7 @@ class SimulationAnalyzer:
             for key in param_mapping:
                 if part.startswith(key):
                     param_name = param_mapping[key]
-                    param_value = part[len(key) :]
+                    param_value = part[len(key):]
 
                     if key in ["BW", "UEs", "TM", "Dist"]:
                         try:
@@ -71,14 +103,13 @@ class SimulationAnalyzer:
         return params
 
     def read_simulation_file(self, filepath):
-        """Читает файл с результатами симуляции"""
+        """Read simulation results file"""
         try:
             try:
-                df = pd.read_csv(filepath, sep="\t")
+                df = pd.read_csv(filepath, sep="\t", index_col=False)
             except:
                 df = pd.read_csv(filepath)
 
-            df = df.reset_index(drop=True)
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
@@ -86,62 +117,43 @@ class SimulationAnalyzer:
             return None
 
     def calculate_qos_compliance(self, dl_pdcp, ue_count):
-        """Вычисляет соответствие QoS требованиям с обновленными параметрами"""
+        """Calculate QoS compliance and actual values for each traffic type"""
         if dl_pdcp is None or "IMSI" not in dl_pdcp.columns:
-            return 0.0
+            return 0.0, {}
 
         qos_requirements = {
-            "gbr": {  # GBR traffic (even IMSI) - video
-                "throughput": 5.0,  # Mbps (required for video)
-                "delay": 150.0,  # ms Packet Delay Budget
-                "loss": 0.1,  # 10^-3 Packet Loss Rate (0.1%)
-            },
-            "non_gbr": {  # Non-GBR traffic (odd IMSI) - voice
-                "throughput": 1.0,  # Mbps (required for voice)
-                "delay": 100.0,  # ms Packet Delay Budget
-                "loss": 0.1,  # 10^-3 Packet Loss Rate (0.1%)
-            },
+            "voice": {"throughput": 0.3, "delay": 0.01, "loss": 0.01},
+            "video": {"throughput": 7.5, "delay": 0.015, "loss": 0.001},
+            "gaming": {"throughput": 2.5, "delay": 0.005, "loss": 0.001},
+            "best_effort": {"throughput": 0.3, "delay": 0.03, "loss": 0.01},
         }
 
-        compliance_stats = {
-            "gbr": {"throughput": 0, "delay": 0, "loss": 0, "total": 0},
-            "non_gbr": {"throughput": 0, "delay": 0, "loss": 0, "total": 0},
-        }
-
-        actual_values = {
-            "gbr": {"throughput": [], "delay": [], "loss": []},
-            "non_gbr": {"throughput": [], "delay": [], "loss": []},
-        }
+        compliance_stats = {k: {"throughput": 0, "delay": 0, "loss": 0, "total": 0} for k in qos_requirements}
+        actual_values = {k: {"throughput": [], "delay": [], "loss": []} for k in qos_requirements}
 
         try:
             grouped = dl_pdcp.groupby("IMSI")
 
             for imsi, group in grouped:
-                if imsi % 2 == 1:
-                    traffic_type = "gbr"
-                else:
-                    traffic_type = "non_gbr"
-
+                i = int(imsi) - 1
+                traffic_type = ["voice", "video", "gaming", "best_effort"][i % 4]
                 req = qos_requirements[traffic_type]
                 compliance_stats[traffic_type]["total"] += 1
 
                 time_diff = group["end"].max() - group["% start"].min()
-                if time_diff <= 0:
-                    time_diff = 1.0
+                time_diff = time_diff if time_diff > 0 else 1.0
 
                 user_throughput = group["TxBytes"].sum() * 8 / time_diff / 1e6
                 user_delay = group["delay"].mean() if "delay" in group.columns else 0
 
-                tx_packets = group["TxBytes"].sum() if "TxBytes" in group.columns else 1
-                rx_packets = group["RxBytes"].sum() if "RxBytes" in group.columns else 0
+                tx_packets = group["TxBytes"].sum()
+                rx_packets = group["RxBytes"].sum() if "RxBytes" in group.columns else tx_packets
                 user_loss = (tx_packets - rx_packets) / tx_packets * 100 if tx_packets > 0 else 0
 
-                # Store actual values
                 actual_values[traffic_type]["throughput"].append(user_throughput)
                 actual_values[traffic_type]["delay"].append(user_delay)
                 actual_values[traffic_type]["loss"].append(user_loss)
 
-                # Check QoS compliance
                 if user_throughput >= req["throughput"]:
                     compliance_stats[traffic_type]["throughput"] += 1
                 if user_delay <= req["delay"]:
@@ -149,89 +161,103 @@ class SimulationAnalyzer:
                 if user_loss <= req["loss"]:
                     compliance_stats[traffic_type]["loss"] += 1
 
-            # Save compliance stats
-            for traffic_type in ["gbr", "non_gbr"]:
-                if compliance_stats[traffic_type]["total"] > 0:
-                    self.user_qos_stats[traffic_type].append(
-                        {
-                            "throughput_compliance": compliance_stats[traffic_type]["throughput"]
-                            / compliance_stats[traffic_type]["total"]
-                            * 100,
-                            "delay_compliance": compliance_stats[traffic_type]["delay"]
-                            / compliance_stats[traffic_type]["total"]
-                            * 100,
-                            "loss_compliance": compliance_stats[traffic_type]["loss"]
-                            / compliance_stats[traffic_type]["total"]
-                            * 100,
-                        }
-                    )
-
-            # Save actual values
-            for traffic_type in ["gbr", "non_gbr"]:
-                self.user_actual_qos_values[traffic_type].append(
-                    {
-                        "avg_throughput": np.mean(actual_values[traffic_type]["throughput"]),
-                        "avg_delay": np.mean(actual_values[traffic_type]["delay"]),
-                        "avg_loss": np.mean(actual_values[traffic_type]["loss"]),
-                        "median_throughput": np.median(actual_values[traffic_type]["throughput"]),
-                        "median_delay": np.median(actual_values[traffic_type]["delay"]),
-                        "median_loss": np.median(actual_values[traffic_type]["loss"]),
-                        "min_throughput": np.min(actual_values[traffic_type]["throughput"]),
-                        "max_delay": np.max(actual_values[traffic_type]["delay"]),
-                        "max_loss": np.max(actual_values[traffic_type]["loss"]),
+            per_type_compliance = {}
+            for t in qos_requirements:
+                total = compliance_stats[t]["total"]
+                if total > 0:
+                    throughput_p = 100 * compliance_stats[t]["throughput"] / total
+                    delay_p = 100 * compliance_stats[t]["delay"] / total
+                    loss_p = 100 * compliance_stats[t]["loss"] / total
+                    per_type_compliance[t] = {
+                        "throughput_compliance": throughput_p,
+                        "delay_compliance": delay_p,
+                        "loss_compliance": loss_p,
+                        "avg_throughput": np.mean(actual_values[t]["throughput"]),
+                        "avg_delay": np.mean(actual_values[t]["delay"]),
+                        "avg_loss": np.mean(actual_values[t]["loss"]),
+                        "median_throughput": np.median(actual_values[t]["throughput"]),
+                        "median_delay": np.median(actual_values[t]["delay"]),
+                        "median_loss": np.median(actual_values[t]["loss"]),
+                        "min_throughput": np.min(actual_values[t]["throughput"]),
+                        "max_delay": np.max(actual_values[t]["delay"]),
+                        "max_loss": np.max(actual_values[t]["loss"]),
                     }
-                )
 
-            # Calculate overall compliance
-            total_users = sum(stats["total"] for stats in compliance_stats.values())
+            total_users = sum(v["total"] for v in compliance_stats.values())
             if total_users == 0:
-                return 0.0
+                return 0.0, per_type_compliance
 
-            qos_compliance = 0
-            for traffic_type in compliance_stats:
-                weight = compliance_stats[traffic_type]["total"] / total_users
-                type_compliance = (
-                    compliance_stats[traffic_type]["throughput"]
-                    + compliance_stats[traffic_type]["delay"]
-                    + compliance_stats[traffic_type]["loss"]
-                ) / (3 * max(1, compliance_stats[traffic_type]["total"]))
-                qos_compliance += type_compliance * weight
+            qos_compliance = 0.0
+            for t in qos_requirements:
+                weight = compliance_stats[t]["total"] / total_users
+                per_type = (
+                    compliance_stats[t]["throughput"]
+                    + compliance_stats[t]["delay"]
+                    + compliance_stats[t]["loss"]
+                ) / (3 * max(1, compliance_stats[t]["total"]))
+                qos_compliance += per_type * weight
 
-            return qos_compliance * 100
+            return qos_compliance * 100, per_type_compliance
         except Exception as e:
             print(f"Error in QoS calculation: {e}")
-            return 0.0
+            return 0.0, {}
+
+    def compute_throughput_by_traffic_type(self, df, simulation_time):
+        qos_traffic_map = {
+            0: "voice",
+            1: "video",
+            2: "gaming",
+            3: "best_effort",
+        }
+
+        per_type_throughput = defaultdict(float)
+
+        if "IMSI" not in df.columns or "TxBytes" not in df.columns:
+            return per_type_throughput
+
+        grouped = df.groupby("IMSI")
+        for imsi, group in grouped:
+            traffic_type = qos_traffic_map[(int(imsi) -1) % 4]
+            tx_bytes = group["TxBytes"].sum()
+            per_type_throughput[traffic_type] += tx_bytes * 8 / simulation_time / 1e6  # Mbps
+
+        per_type_throughput["gbr_total"] = (
+            per_type_throughput["voice"]
+            + per_type_throughput["video"]
+            + per_type_throughput["gaming"]
+        )
+        per_type_throughput["non_gbr_total"] = per_type_throughput["best_effort"]
+
+        return per_type_throughput
 
     def calculate_metrics(self, folder_path, params):
-        """Вычисляет метрики для одной симуляции"""
+        """Calculate metrics for a single simulation"""
         metrics = {}
 
         try:
-            # Загружаем все необходимые файлы
             dl_mac = self.read_simulation_file(os.path.join(folder_path, "dl_mac_stats.csv"))
             dl_pdcp = self.read_simulation_file(os.path.join(folder_path, "dl_pdcp_stats.csv"))
-            dl_tx_phy = self.read_simulation_file(os.path.join(folder_path, "dl_tx_phy_stats.csv"))
 
             if dl_pdcp is None or dl_mac is None:
                 print(f"Skipping {folder_path} due to missing data")
                 return None
 
-            # Вычисляем время симуляции
-            if "end" in dl_pdcp.columns and "start" in dl_pdcp.columns:
-                simulation_time = dl_pdcp["end"].max() - dl_pdcp["start"].min()
-            elif "% time" in dl_mac.columns:
-                simulation_time = dl_mac["% time"].max() - dl_mac["% time"].min()
+            if "end" in dl_pdcp.columns and "% start" in dl_pdcp.columns:
+                simulation_time = dl_pdcp["end"].max() - dl_pdcp["% start"].min()
             else:
                 simulation_time = 1.0
 
             if simulation_time <= 0:
                 simulation_time = 1.0
+            
+            per_type_tp = self.compute_throughput_by_traffic_type(dl_pdcp, simulation_time)
+            for ttype, value in per_type_tp.items():
+                metrics[f"{ttype}_throughput"] = value
 
-            # 1. Пропускная способность
+            # 1. Throughput metrics
             total_tx_bytes = dl_pdcp["TxBytes"].sum() if "TxBytes" in dl_pdcp.columns else 0
             metrics["total_throughput"] = total_tx_bytes * 8 / simulation_time / 1e6  # Mbps
 
-            # Средняя пропускная способность на пользователя
             ue_count = params.get(
                 "ue_count", len(dl_pdcp["IMSI"].unique()) if "IMSI" in dl_pdcp.columns else 1
             )
@@ -239,14 +265,14 @@ class SimulationAnalyzer:
                 metrics["total_throughput"] / ue_count if ue_count > 0 else 0
             )
 
-            # Пропускная способность по типам трафика (по IMSI)
+            # GBR/Non-GBR throughput
             if "IMSI" in dl_pdcp.columns and "TxBytes" in dl_pdcp.columns:
-                gbr_mask = dl_pdcp["IMSI"] % 2 == 0
+                ngbr_mask = dl_pdcp["IMSI"] % 4 == 0
                 gbr_tx_bytes = (
-                    dl_pdcp.loc[gbr_mask, "TxBytes"].sum() if "TxBytes" in dl_pdcp.columns else 0
+                    dl_pdcp.loc[~ngbr_mask, "TxBytes"].sum() if "TxBytes" in dl_pdcp.columns else 0
                 )
                 non_gbr_tx_bytes = (
-                    dl_pdcp.loc[~gbr_mask, "TxBytes"].sum() if "TxBytes" in dl_pdcp.columns else 0
+                    dl_pdcp.loc[ngbr_mask, "TxBytes"].sum() if "TxBytes" in dl_pdcp.columns else 0
                 )
 
                 metrics["gbr_throughput"] = gbr_tx_bytes * 8 / simulation_time / 1e6
@@ -255,18 +281,17 @@ class SimulationAnalyzer:
                 metrics["gbr_throughput"] = 0
                 metrics["non_gbr_throughput"] = 0
 
-            # 2. Задержка и джиттер
+            # 2. Delay and jitter
             if "delay" in dl_pdcp.columns:
                 delays = dl_pdcp["delay"].dropna()
-                metrics["avg_delay"] = delays.mean() if len(delays) > 0 else 0
-
-                # Джиттер (вариация задержки)
-                metrics["jitter"] = delays.std() if len(delays) > 1 else 0
+                metrics["avg_delay"] = delays.mean() if len(delays) > 0 else 1
+                jitter = dl_pdcp["stdDev"].dropna()
+                metrics["jitter"] = jitter.mean() if len(jitter) > 0 else 1
             else:
-                metrics["avg_delay"] = 0
-                metrics["jitter"] = 0
+                metrics["avg_delay"] = 1
+                metrics["jitter"] = 1
 
-            # 3. Потеря пакетов
+            # 3. Packet loss
             if "nTxPDUs" in dl_pdcp.columns and "nRxPDUs" in dl_pdcp.columns:
                 tx_packets = dl_pdcp["nTxPDUs"].sum()
                 rx_packets = dl_pdcp["nRxPDUs"].sum()
@@ -276,7 +301,7 @@ class SimulationAnalyzer:
             else:
                 metrics["packet_loss"] = 0
 
-            # 4. Спектральная эффективность
+            # 4. Spectral efficiency
             total_bits = 0
             if "sizeTb1" in dl_mac.columns:
                 total_bits += dl_mac["sizeTb1"].sum() * 8
@@ -288,7 +313,7 @@ class SimulationAnalyzer:
                 total_bits / (bandwidth * 1e6 * simulation_time) if bandwidth > 0 else 0
             )
 
-            # 5. Индекс справедливости (Jain's Fairness Index)
+            # 5. Fairness index
             if "IMSI" in dl_pdcp.columns and "TxBytes" in dl_pdcp.columns:
                 throughput_per_ue = (
                     dl_pdcp.groupby("IMSI")["TxBytes"].sum() * 8 / simulation_time / 1e6
@@ -302,22 +327,17 @@ class SimulationAnalyzer:
                 else:
                     metrics["fairness_index"] = 1
             else:
-                metrics["fairness_index"] = 1
+                metrics["fairness_index"] = 0
 
-            # 6. Эффективность планирования
-            total_scheduled = len(dl_mac) if dl_mac is not None else 0
-            max_possible_schedules = simulation_time * 1000  # предполагая 1 TTI = 1ms
-            metrics["scheduling_efficiency"] = (
-                total_scheduled / max_possible_schedules * 100 if max_possible_schedules > 0 else 0
-            )
+            # 6. QoS compliance
+            qos_compliance, per_type_qos = self.calculate_qos_compliance(dl_pdcp, ue_count)
+            metrics["qos_compliance"] = qos_compliance
+            
+            for ttype, values in per_type_qos.items():
+                for k, v in values.items():
+                    metrics[f"{ttype}_{k}"] = v
 
-            # 7. Соответствие QoS требованиям
-            metrics["qos_compliance"] = self.calculate_qos_compliance(dl_pdcp, ue_count)
-
-            # Очистка памяти
             del dl_mac, dl_pdcp
-            if dl_tx_phy is not None:
-                del dl_tx_phy
             gc.collect()
 
             return metrics
@@ -327,7 +347,7 @@ class SimulationAnalyzer:
             return None
 
     def analyze_all_simulations(self):
-        """Анализирует все папки с результатами симуляции"""
+        """Analyze all simulation folders"""
         folders = [
             f
             for f in os.listdir(self.results_dir)
@@ -344,12 +364,10 @@ class SimulationAnalyzer:
                 for metric_name in self.metrics:
                     self.metrics[metric_name].append(metrics.get(metric_name, np.nan))
 
-        # Создаем общий DataFrame для анализа
         self.results_df = pd.DataFrame(self.simulation_params)
         for metric_name in self.metrics:
             self.results_df[metric_name] = self.metrics[metric_name]
 
-        # Заполняем отсутствующие параметры значениями по умолчанию
         if "bandwidth" not in self.results_df.columns:
             self.results_df["bandwidth"] = 10
         if "ue_count" not in self.results_df.columns:
@@ -358,17 +376,16 @@ class SimulationAnalyzer:
             self.results_df["distance"] = 100
 
     def save_plot_as_html(self, fig, filename):
-        """Сохраняет график как HTML файл"""
+        """Save plot as HTML file"""
         if not os.path.exists("plots"):
             os.makedirs("plots")
         fig.write_html(f"plots/{filename}.html")
 
     def plot_metrics_comparison(self, x_param="ue_count", hue_param="scheduler"):
-        """Строит графики сравнения метрик по параметру с группировкой"""
+        """Plot metrics comparison by parameter with grouping and up to 4 subplots per figure."""
         if not hasattr(self, "results_df"):
             self.analyze_all_simulations()
 
-        # Проверяем наличие параметров в данных
         available_params = [
             col for col in self.results_df.columns if self.results_df[col].nunique() > 1
         ]
@@ -382,24 +399,25 @@ class SimulationAnalyzer:
         if hue_param not in available_params:
             hue_param = None
 
-        # Группируем метрики по категориям для лучшей визуализации
         metric_groups = {
             "Throughput Metrics": [
-                "total_throughput",
-                "avg_user_throughput",
-                "gbr_throughput",
-                "non_gbr_throughput",
+                "total_throughput", "avg_user_throughput", "gbr_throughput", "non_gbr_throughput",
+                "voice_throughput", "video_throughput", "gaming_throughput", "best_effort_throughput",
             ],
             "Quality Metrics": [
-                "avg_delay",
-                "jitter",
-                "packet_loss",
+                "avg_delay", "jitter", "packet_loss",
+                "voice_avg_delay", "video_avg_delay", "gaming_avg_delay", "best_effort_avg_delay",
+                "voice_avg_loss", "video_avg_loss", "gaming_avg_loss", "best_effort_avg_loss",
+            ],
+            "QoS Compliance Metrics": [
                 "qos_compliance",
+                "voice_throughput_compliance", "voice_delay_compliance", "voice_loss_compliance",
+                "video_throughput_compliance", "video_delay_compliance", "video_loss_compliance",
+                "gaming_throughput_compliance", "gaming_delay_compliance", "gaming_loss_compliance",
+                "best_effort_throughput_compliance", "best_effort_delay_compliance", "best_effort_loss_compliance",
             ],
             "Efficiency Metrics": [
-                "spectral_efficiency",
-                "fairness_index",
-                "scheduling_efficiency",
+                "spectral_efficiency", "fairness_index",
             ],
         }
 
@@ -408,274 +426,296 @@ class SimulationAnalyzer:
             "avg_user_throughput": "Avg User Throughput (Mbps)",
             "gbr_throughput": "GBR Throughput (Mbps)",
             "non_gbr_throughput": "Non-GBR Throughput (Mbps)",
+            "voice_throughput": "Voice Throughput (Mbps)",
+            "video_throughput": "Video Throughput (Mbps)",
+            "gaming_throughput": "Gaming Throughput (Mbps)",
+            "best_effort_throughput": "Best Effort Throughput (Mbps)",
+
             "avg_delay": "Avg Packet Delay (ms)",
             "jitter": "Jitter (ms)",
             "packet_loss": "Packet Loss (%)",
+            "voice_avg_delay": "Voice Avg Delay (ms)",
+            "video_avg_delay": "Video Avg Delay (ms)",
+            "gaming_avg_delay": "Gaming Avg Delay (ms)",
+            "best_effort_avg_delay": "Best Effort Avg Delay (ms)",
+            "voice_avg_loss": "Voice Avg Loss (%)",
+            "video_avg_loss": "Video Avg Loss (%)",
+            "gaming_avg_loss": "Gaming Avg Loss (%)",
+            "best_effort_avg_loss": "Best Effort Avg Loss (%)",
+
+            "qos_compliance": "Overall QoS Compliance (%)",
+            "voice_throughput_compliance": "Voice Throughput Compliance (%)",
+            "voice_delay_compliance": "Voice Delay Compliance (%)",
+            "voice_loss_compliance": "Voice Loss Compliance (%)",
+            "video_throughput_compliance": "Video Throughput Compliance (%)",
+            "video_delay_compliance": "Video Delay Compliance (%)",
+            "video_loss_compliance": "Video Loss Compliance (%)",
+            "gaming_throughput_compliance": "Gaming Throughput Compliance (%)",
+            "gaming_delay_compliance": "Gaming Delay Compliance (%)",
+            "gaming_loss_compliance": "Gaming Loss Compliance (%)",
+            "best_effort_throughput_compliance": "Best Effort Throughput Compliance (%)",
+            "best_effort_delay_compliance": "Best Effort Delay Compliance (%)",
+            "best_effort_loss_compliance": "Best Effort Loss Compliance (%)",
+
             "spectral_efficiency": "Spectral Efficiency (bps/Hz)",
             "fairness_index": "Fairness Index (Jain's)",
-            "scheduling_efficiency": "Scheduling Efficiency (%)",
-            "qos_compliance": "QoS Compliance (%)",
         }
 
-        # Создаем отдельные графики для каждой группы метрик
+        if hue_param:
+            hue_values = sorted(self.results_df[hue_param].unique())
+            colors = px.colors.qualitative.Plotly
+        else:
+            hue_values = [None]
+            colors = ["blue"]
+
+        sorted_df = self.results_df.sort_values(x_param)
+
         for group_name, metrics in metric_groups.items():
-            fig = make_subplots(
-                rows=1,
-                cols=len(metrics),
-                subplot_titles=[metric_titles[m] for m in metrics],
-                horizontal_spacing=0.1,
-            )
+            existing_metrics = [m for m in metrics if m in self.results_df.columns]
+            if not existing_metrics:
+                continue
 
-            if hue_param:
-                hue_values = sorted(self.results_df[hue_param].unique())
-                colors = px.colors.qualitative.Plotly
-            else:
-                hue_values = [None]
-                colors = ["blue"]
+            for chunk_idx in range(0, len(existing_metrics), 4):
+                chunk_metrics = existing_metrics[chunk_idx:chunk_idx+4]
+                
+                fig = make_subplots(
+                    rows=1, cols=len(chunk_metrics),
+                    subplot_titles=[metric_titles[m] for m in chunk_metrics],
+                    horizontal_spacing=0.08,
+                )
 
-            sorted_df = self.results_df.sort_values(x_param)
+                for i, metric in enumerate(chunk_metrics):
+                    for j, hue_value in enumerate(hue_values):
+                        if hue_value is not None:
+                            subset = sorted_df[sorted_df[hue_param] == hue_value]
+                            name = str(hue_value)
+                        else:
+                            subset = sorted_df
+                            name = "All"
 
-            for i, metric in enumerate(metrics):
-                for j, hue_value in enumerate(hue_values):
+                        hover_text = []
+                        for idx, row in subset.iterrows():
+                            param_text = "<br>".join(
+                                [
+                                    f"{k}: {v}"
+                                    for k, v in row.items()
+                                    if k not in self.metrics and k != x_param
+                                ]
+                            )
+                            hover_text.append(
+                                f"{x_param}: {row[x_param]}<br>{metric_titles[metric]}: {row[metric]:.2f}<br>{param_text}"
+                            )
+
+                        fig.add_trace(
+                            go.Scatter(
+                                x=subset[x_param],
+                                y=subset[metric],
+                                name=name,
+                                mode="lines+markers",
+                                marker=dict(size=8, color=colors[j % len(colors)]),
+                                line=dict(width=2, color=colors[j % len(colors)]),
+                                legendgroup=name,
+                                showlegend=(i == 0),
+                                hovertemplate="%{text}<extra></extra>",
+                                text=hover_text,
+                            ),
+                            row=1, col=i+1,
+                        )
+
+                    fig.update_xaxes(title_text=x_param.replace("_", " ").title(), row=1, col=i+1)
+                    fig.update_yaxes(title_text=metric_titles[metric], row=1, col=i+1)
+
+                fig.update_layout(
+                    title={
+                        "text": f"<b>{group_name} (Part {chunk_idx//4 + 1}) vs {x_param.replace('_', ' ').title()}" +
+                                (f" by {hue_param.replace('_', ' ').title()}" if hue_param else ""),
+                        "y": 0.98,
+                        "x": 0.5,
+                        "xanchor": "center",
+                        "yanchor": "top",
+                        "font": dict(size=16),
+                    },
+                    height=500,
+                    width=300 * len(chunk_metrics),
+                    margin=dict(t=100, b=80, l=80, r=80),
+                )
+
+                if hue_param:
+                    fig.update_layout(
+                        legend=dict(
+                            title=f"<b>{hue_param.replace('_', ' ').title()}</b>",
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.1,
+                            xanchor="right",
+                            x=1,
+                        )
+                    )
+
+                filename = f"{group_name.lower().replace(' ', '_')}_part_{chunk_idx//4 + 1}_vs_{x_param}"
+                if hue_param:
+                    filename += f"_by_{hue_param}"
+                self.save_plot_as_html(fig, filename)
+
+                fig.show()
+
+
+    def plot_qos_compliance_details(self, x_param="ue_count", hue_param="scheduler"):
+        """Plot detailed QoS compliance metrics separately for each metric"""
+        if not hasattr(self, "results_df"):
+            self.analyze_all_simulations()
+
+        traffic_types = ["voice", "video", "gaming", "best_effort"]
+        metrics = ["throughput_compliance", "delay_compliance", "loss_compliance"]
+
+        if hue_param:
+            hue_values = sorted(self.results_df[hue_param].unique())
+            colors = px.colors.qualitative.Plotly
+        else:
+            hue_values = [None]
+            colors = ["blue"]
+
+        sorted_df = self.results_df.sort_values(x_param)
+
+        for metric in metrics:
+            fig = go.Figure()
+            for traffic_type in traffic_types:
+                col_name = f"{traffic_type}_{metric}"
+                if col_name not in self.results_df.columns:
+                    continue
+
+                for k, hue_value in enumerate(hue_values):
                     if hue_value is not None:
                         subset = sorted_df[sorted_df[hue_param] == hue_value]
-                        name = str(hue_value)
+                        name = f"{traffic_type.title()} - {hue_value}"
                     else:
                         subset = sorted_df
-                        name = "All"
-
-                    # Создаем текст для отображения всех параметров в подсказке
-                    hover_text = []
-                    for idx, row in subset.iterrows():
-                        param_text = "<br>".join(
-                            [
-                                f"{k}: {v}"
-                                for k, v in row.items()
-                                if k not in self.metrics and k != x_param
-                            ]
-                        )
-                        hover_text.append(
-                            f"{x_param}: {row[x_param]}<br>{metric_titles[metric]}: {row[metric]:.2f}<br>{param_text}"
-                        )
+                        name = f"{traffic_type.title()}"
 
                     fig.add_trace(
                         go.Scatter(
                             x=subset[x_param],
-                            y=subset[metric],
-                            name=name,
+                            y=subset[col_name],
                             mode="lines+markers",
-                            marker=dict(size=8, color=colors[j % len(colors)]),
-                            line=dict(width=2, color=colors[j % len(colors)]),
-                            legendgroup=name,
-                            showlegend=(i == 0),
-                            hovertemplate="%{text}<extra></extra>",
-                            text=hover_text,
-                        ),
-                        row=1,
-                        col=i + 1,
+                            name=name,
+                            marker=dict(size=8, color=colors[k % len(colors)]),
+                            line=dict(width=2, color=colors[k % len(colors)]),
+                            legendgroup=str(hue_value) if hue_value else traffic_type,
+                            hovertemplate=f"{x_param}: %{{x}}<br>{traffic_type.title()} {metric.replace('_', ' ')}: %{{y:.1f}}%<extra></extra>"
+                        )
                     )
-
-                fig.update_xaxes(
-                    title_text=x_param.replace("_", " ").title(),
-                    row=1,
-                    col=i + 1,
-                )
-                fig.update_yaxes(
-                    title_text=metric_titles[metric],
-                    row=1,
-                    col=i + 1,
-                )
 
             fig.update_layout(
-                title={
-                    "text": f"<b>{group_name} vs {x_param.replace('_', ' ').title()}"
-                    + (f" by {hue_param.replace('_', ' ').title()}" if hue_param else ""),
-                    "y": 0.98,
-                    "x": 0.5,
-                    "xanchor": "center",
-                    "yanchor": "top",
-                    "font": dict(size=16),
-                },
-                height=500,
-                width=300 * len(metrics),
-                margin=dict(t=100, b=80, l=80, r=80),
+                title=f"<b>{metric.replace('_', ' ').title()} vs {x_param.replace('_', ' ').title()}" +
+                    (f" by {hue_param.replace('_', ' ').title()}" if hue_param else ""),
+                xaxis_title=x_param.replace("_", " ").title(),
+                yaxis_title=f"{metric.replace('_', ' ').title()} (%)",
+                height=600,
+                width=900,
+                legend_title=hue_param.replace("_", " ").title() if hue_param else None,
+                margin=dict(t=80, b=80, l=80, r=80)
             )
 
-            if hue_param:
-                fig.update_layout(
-                    legend=dict(
-                        title=f"<b>{hue_param.replace('_', ' ').title()}</b>",
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.1,
-                        xanchor="right",
-                        x=1,
-                    )
-                )
-
-            # Сохраняем график как HTML
-            filename = f"{group_name.lower().replace(' ', '_')}_vs_{x_param}"
+            filename = f"qos_compliance_{metric}_vs_{x_param}"
             if hue_param:
                 filename += f"_by_{hue_param}"
-            self.save_plot_as_html(fig, filename)
 
+            self.save_plot_as_html(fig, filename)
             fig.show()
 
-    def plot_qos_compliance_details(self):
-        """Строит графики детализации соответствия QoS требованиям"""
+
+    def plot_actual_qos_values(self, x_param="ue_count", hue_param="scheduler"):
+        """Plot actual QoS values separately for each metric"""
         if not hasattr(self, "results_df"):
             self.analyze_all_simulations()
 
-        if not self.user_qos_stats["gbr"] and not self.user_qos_stats["non_gbr"]:
-            print("No QoS compliance data available")
-            return
+        traffic_types = ["voice", "video", "gaming", "best_effort"]
+        metrics = ["avg_throughput", "avg_delay", "avg_loss"]
 
-        # Create a figure with two rows: one for compliance, one for actual values
-        fig = make_subplots(
-            rows=2,
-            cols=2,
-            subplot_titles=(
-                "GBR Traffic QoS Compliance",
-                "Non-GBR Traffic QoS Compliance",
-                "GBR Traffic Actual Values",
-                "Non-GBR Traffic Actual Values",
-            ),
-            horizontal_spacing=0.2,
-            vertical_spacing=0.15,
-            specs=[[{"type": "bar"}, {"type": "bar"}], [{"type": "box"}, {"type": "box"}]],
-        )
-
-        # Compliance plots (first row)
-        for i, traffic_type in enumerate(["gbr", "non_gbr"]):
-            stats = pd.DataFrame(self.user_qos_stats[traffic_type])
-            if stats.empty:
-                continue
-
-            for j, metric in enumerate(
-                ["throughput_compliance", "delay_compliance", "loss_compliance"]
-            ):
-                if metric in stats.columns:
-                    fig.add_trace(
-                        go.Bar(
-                            x=[metric.replace("_", " ").title()],
-                            y=[stats[metric].mean()],
-                            name=traffic_type.upper(),
-                            marker_color=px.colors.qualitative.Plotly[i * 3 + j],
-                            showlegend=False,
-                            text=[f"{stats[metric].mean():.1f}%"],
-                            textposition="auto",
-                        ),
-                        row=1,
-                        col=i + 1,
-                    )
-
-        # Actual values plots (second row)
-        for i, traffic_type in enumerate(["gbr", "non_gbr"]):
-            values = pd.DataFrame(self.user_actual_qos_values[traffic_type])
-            if values.empty:
-                continue
-
-            # Throughput box plot
-            fig.add_trace(
-                go.Box(
-                    y=values["avg_throughput"],
-                    name="Throughput (Mbps)",
-                    marker_color=px.colors.qualitative.Plotly[0],
-                    boxpoints="all",
-                    jitter=0.3,
-                    pointpos=-1.8,
-                    showlegend=(i == 0),
-                ),
-                row=2,
-                col=i + 1,
-            )
-
-            # Delay box plot
-            fig.add_trace(
-                go.Box(
-                    y=values["avg_delay"],
-                    name="Delay (ms)",
-                    marker_color=px.colors.qualitative.Plotly[1],
-                    boxpoints="all",
-                    jitter=0.3,
-                    pointpos=-1.8,
-                    showlegend=(i == 0),
-                ),
-                row=2,
-                col=i + 1,
-            )
-
-            # Loss box plot
-            fig.add_trace(
-                go.Box(
-                    y=values["avg_loss"],
-                    name="Packet Loss (%)",
-                    marker_color=px.colors.qualitative.Plotly[2],
-                    boxpoints="all",
-                    jitter=0.3,
-                    pointpos=-1.8,
-                    showlegend=(i == 0),
-                ),
-                row=2,
-                col=i + 1,
-            )
-
-        # Add reference lines for QoS requirements
         qos_requirements = {
-            "gbr": {"throughput": 5.0, "delay": 150.0, "loss": 0.1},
-            "non_gbr": {"throughput": 1.0, "delay": 100.0, "loss": 0.1},
+            "voice": {"avg_throughput": 0.3, "avg_delay": 100.0, "avg_loss": 0.1},
+            "video": {"avg_throughput": 7.5, "avg_delay": 150.0, "avg_loss": 0.1},
+            "gaming": {"avg_throughput": 2.5, "avg_delay": 100.0, "avg_loss": 0.1},
+            "best_effort": {"avg_throughput": 1.0, "avg_delay": 300.0, "avg_loss": 1.0}
         }
 
-        for i, traffic_type in enumerate(["gbr", "non_gbr"]):
-            # Throughput reference line
-            fig.add_hline(
-                y=qos_requirements[traffic_type]["throughput"],
-                line_dash="dot",
-                line_color="green",
-                annotation_text=f"Min Throughput: {qos_requirements[traffic_type]['throughput']}Mbps",
-                annotation_position="top left",
-                row=2,
-                col=i + 1,
+        if hue_param:
+            hue_values = sorted(self.results_df[hue_param].unique())
+            colors = px.colors.qualitative.Plotly
+        else:
+            hue_values = [None]
+            colors = ["blue"]
+
+        sorted_df = self.results_df.sort_values(x_param)
+
+        for metric in metrics:
+            fig = go.Figure()
+            for traffic_type in traffic_types:
+                col_name = f"{traffic_type}_{metric}"
+                if col_name not in self.results_df.columns:
+                    continue
+
+                for k, hue_value in enumerate(hue_values):
+                    if hue_value is not None:
+                        subset = sorted_df[sorted_df[hue_param] == hue_value]
+                        name = f"{traffic_type.title()} - {hue_value}"
+                    else:
+                        subset = sorted_df
+                        name = f"{traffic_type.title()}"
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=subset[x_param],
+                            y=subset[col_name],
+                            mode="lines+markers",
+                            name=name,
+                            marker=dict(size=8, color=colors[k % len(colors)]),
+                            line=dict(width=2, color=colors[k % len(colors)]),
+                            legendgroup=str(hue_value) if hue_value else traffic_type,
+                            hovertemplate=f"{x_param}: %{{x}}<br>{metric.replace('_', ' ')}: %{{y:.2f}}" +
+                                        (" Mbps" if "throughput" in metric else " ms" if "delay" in metric else " %") + "<extra></extra>"
+                        )
+                    )
+
+                for traffic_type in traffic_types:
+                    req_value = qos_requirements[traffic_type].get(metric)
+                    if req_value is not None:
+                        fig.add_hline(
+                            y=req_value,
+                            line_dash="dot",
+                            line_color="green" if "throughput" in metric else "red" if "delay" in metric else "orange",
+                            annotation_text=f"{traffic_type.title()} QoS {'Min' if 'throughput' in metric else 'Max'}",
+                            annotation_position="top right" if "delay" in metric else "bottom right",
+                            annotation_font_size=10
+                        )
+
+            yaxis_titles = {
+                "avg_throughput": "Throughput (Mbps)",
+                "avg_delay": "Delay (ms)",
+                "avg_loss": "Loss (%)"
+            }
+
+            fig.update_layout(
+                title=f"<b>{metric.replace('_', ' ').title()} vs {x_param.replace('_', ' ').title()}" +
+                    (f" by {hue_param.replace('_', ' ').title()}" if hue_param else ""),
+                xaxis_title=x_param.replace("_", " ").title(),
+                yaxis_title=yaxis_titles.get(metric, metric),
+                height=600,
+                width=900,
+                legend_title=hue_param.replace("_", " ").title() if hue_param else None,
+                margin=dict(t=80, b=80, l=80, r=80)
             )
 
-            # Delay reference line
-            fig.add_hline(
-                y=qos_requirements[traffic_type]["delay"],
-                line_dash="dot",
-                line_color="red",
-                annotation_text=f"Max Delay: {qos_requirements[traffic_type]['delay']}ms",
-                annotation_position="top right",
-                row=2,
-                col=i + 1,
-            )
+            filename = f"actual_qos_values_{metric}_vs_{x_param}"
+            if hue_param:
+                filename += f"_by_{hue_param}"
 
-            # Loss reference line
-            fig.add_hline(
-                y=qos_requirements[traffic_type]["loss"],
-                line_dash="dot",
-                line_color="orange",
-                annotation_text=f"Max Loss: {qos_requirements[traffic_type]['loss']}%",
-                annotation_position="bottom right",
-                row=2,
-                col=i + 1,
-            )
+            self.save_plot_as_html(fig, filename)
+            fig.show()
 
-        fig.update_layout(
-            title="<b>QoS Compliance and Actual Performance Metrics</b>",
-            height=800,
-            width=1000,
-            margin=dict(t=100, b=80, l=80, r=80),
-            boxmode="group",
-        )
-
-        # Save and show the plot
-        self.save_plot_as_html(fig, "qos_compliance_and_actual_values")
-        fig.show()
-        # else:
-        #     print("No QoS compliance data to display")
 
     def plot_correlation_heatmap(self):
-        """Строит тепловую карту корреляций между параметрами и метриками"""
+        """Plot correlation heatmap between parameters and metrics"""
         if not hasattr(self, "results_df"):
             self.analyze_all_simulations()
 
@@ -692,7 +732,6 @@ class SimulationAnalyzer:
 
         corr_matrix = self.results_df[numeric_cols].corr()
 
-        # Сортируем колонки для лучшего отображения
         metric_cols = [col for col in numeric_cols if col in self.metrics.keys()]
         param_cols = [col for col in numeric_cols if col not in self.metrics.keys()]
         sorted_cols = param_cols + metric_cols
@@ -720,40 +759,19 @@ class SimulationAnalyzer:
             margin=dict(l=150, r=50, b=150, t=100),
         )
 
-        # Сохраняем график как HTML
         self.save_plot_as_html(fig, "correlation_heatmap")
         fig.show()
-
 
 if __name__ == "__main__":
     analyzer = SimulationAnalyzer()
     analyzer.analyze_all_simulations()
 
-    # Построение графиков сравнения
     analyzer.plot_metrics_comparison("ue_count")
     analyzer.plot_metrics_comparison("bandwidth")
     analyzer.plot_metrics_comparison("distance")
 
-    # Детализация соответствия QoS
     analyzer.plot_qos_compliance_details()
 
-    # Тепловая карта корреляций
     analyzer.plot_correlation_heatmap()
 
-    # Сохранение результатов
     analyzer.results_df.to_csv("simulation_analysis_results.csv", index=False)
-
-    if analyzer.user_qos_stats["gbr"]:
-        pd.DataFrame(analyzer.user_qos_stats["gbr"]).to_csv("gbr_qos_stats.csv", index=False)
-    if analyzer.user_qos_stats["non_gbr"]:
-        pd.DataFrame(analyzer.user_qos_stats["non_gbr"]).to_csv(
-            "non_gbr_qos_stats.csv", index=False
-        )
-    # df = analyzer.read_simulation_file(
-    #     "SimulationResults/Urban_BW100_UEs1_TM3_CAOn_SchedPF_MobPedestrian_GBRvideo_NonGBRvoice/dl_pdcp_stats.csv"
-    # )
-    # print(df["TxBytes"].sum())
-    # ,
-    # 10,
-    # )
-    # )
